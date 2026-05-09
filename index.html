@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Personal Jira – Marcin Pindral</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -440,23 +441,6 @@ td:hover .add-task-trigger { opacity: 1; }
   color: var(--text3); font-size: 13px;
 }
 
-/* ── Config banner ───────────────────────────────────── */
-#config-banner {
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  border-left: 3px solid var(--todo);
-  border-radius: var(--rs);
-  padding: 10px 16px;
-  margin-bottom: 20px;
-  font-size: 13px;
-  color: var(--text2);
-  display: none;
-  align-items: center;
-  gap: 10px;
-}
-#config-banner.show { display: flex; }
-#config-banner a { color: var(--accent); text-decoration: none; }
-#config-banner a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -483,11 +467,6 @@ td:hover .add-task-trigger { opacity: 1; }
 </nav>
 
 <div class="content">
-  <!-- Config banner (shown when SCRIPT_URL not set) -->
-  <div id="config-banner">
-    ⚙️ Running in <strong>local-only mode</strong>. To sync with Google Sheets, open this file and paste your Apps Script URL into the <code>SCRIPT_URL</code> constant at the top of the &lt;script&gt;.
-    &nbsp;<a href="#" onclick="document.getElementById('config-banner').classList.remove('show'); return false;">Dismiss</a>
-  </div>
 
   <!-- Tab 1: Idea Bank -->
   <div id="tab-ideas" class="tab-pane active">
@@ -556,11 +535,12 @@ td:hover .add-task-trigger { opacity: 1; }
 <div id="toast"></div>
 
 <script>
-// ─────────────────────────────────────────────────────────
-//  ★ CONFIGURATION — paste your Apps Script /exec URL here
-// ─────────────────────────────────────────────────────────
-const SCRIPT_URL = 'https://script.google.com/a/macros/trilogy.com/s/AKfycbw8oey437Rn6hDHprqJXLnQhNHOaZLm5_exnw-TrfV6Sj7vNRrr8ZFUCoz1bg8HngR8/exec';
-// ─────────────────────────────────────────────────────────
+// ── Supabase ─────────────────────────────────────────────
+const { createClient } = supabase;
+const db = createClient(
+  'https://rquvtoplijnionqynlcr.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJxdXZ0b3BsaWpuaW9ucXlubGNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzMzEwNDUsImV4cCI6MjA5MzkwNzA0NX0.UBQN6XuvQY7xV8WY0VNEzy8wFwS85SFrZxAHlu7TaD8'
+);
 
 const PROJ_COLORS = ['#ef4444','#f59e0b','#10b981','#6366f1','#8b5cf6','#ec4899','#06b6d4','#f97316','#84cc16','#a78bfa'];
 const STATUSES    = ['todo','inprogress','done','stopped'];
@@ -574,10 +554,8 @@ function uid()     { return Date.now().toString(36) + Math.random().toString(36)
 function dateStr() { return new Date().toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
 function esc(s)    { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
-const isSheetsConfigured = () => SCRIPT_URL && SCRIPT_URL.startsWith('https://');
-
-// ── Sync badge ──────────────────────────────────────────
-function setSyncBadge(mode) {   // 'local' | 'syncing' | 'synced' | 'error'
+// ── Sync badge ───────────────────────────────────────────
+function setSyncBadge(mode) {
   const badge = document.getElementById('sync-badge');
   const label = document.getElementById('sync-label');
   badge.className = 'sync-badge ' + (mode === 'local' ? '' : mode);
@@ -585,61 +563,35 @@ function setSyncBadge(mode) {   // 'local' | 'syncing' | 'synced' | 'error'
   label.textContent = labels[mode] || mode;
 }
 
-// ── Persistence ─────────────────────────────────────────
+// ── Persistence ──────────────────────────────────────────
 function saveLocal() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {}
 }
-function loadLocal() {
-  try { const d = localStorage.getItem(LS_KEY); if (d) Object.assign(state, JSON.parse(d)); } catch(e) {}
-}
 
+let saveTimer;
 function save() {
   saveLocal();
-  if (!isSheetsConfigured()) return;
-  setSyncBadge('syncing');
-  fetch(SCRIPT_URL, { method:'POST', mode:'no-cors', body: JSON.stringify(state) })
-    .then(()  => setSyncBadge('synced'))
-    .catch(()  => setSyncBadge('error'));
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(pushToSupabase, 600); // debounce rapid changes
 }
 
-function loadFromSheets() {
-  return new Promise((resolve) => {
-    const cbName = '__dashLoad_' + uid();
-    const timeout = setTimeout(() => {
-      delete window[cbName];
-      resolve(null);
-    }, 6000);
-
-    window[cbName] = (data) => {
-      clearTimeout(timeout);
-      delete window[cbName];
-      resolve(data);
-    };
-
-    const s = document.createElement('script');
-    s.src = SCRIPT_URL + '?callback=' + cbName + '&t=' + Date.now();
-    s.onerror = () => { clearTimeout(timeout); delete window[cbName]; resolve(null); };
-    document.head.appendChild(s);
-  });
+async function pushToSupabase() {
+  setSyncBadge('syncing');
+  const { error } = await db.from('dashboard').upsert({ id: 1, state, updated_at: new Date().toISOString() });
+  setSyncBadge(error ? 'error' : 'synced');
 }
 
 async function load() {
-  if (isSheetsConfigured()) {
-    setSyncBadge('syncing');
-    const data = await loadFromSheets();
-    if (data && typeof data === 'object' && (data.ideas || data.projects)) {
-      Object.assign(state, data);
-      saveLocal(); // cache locally too
-      setSyncBadge('synced');
-    } else {
-      // Sheets load failed — fall back to localStorage
-      loadLocal();
-      setSyncBadge('error');
-    }
+  setSyncBadge('syncing');
+  const { data, error } = await db.from('dashboard').select('state').eq('id', 1).single();
+  if (!error && data?.state && (data.state.ideas || data.state.projects)) {
+    Object.assign(state, data.state);
+    saveLocal();
+    setSyncBadge('synced');
   } else {
-    loadLocal();
-    setSyncBadge('local');
-    document.getElementById('config-banner').classList.add('show');
+    // Fall back to localStorage
+    try { const d = localStorage.getItem(LS_KEY); if (d) Object.assign(state, JSON.parse(d)); } catch(e) {}
+    setSyncBadge(error ? 'error' : 'synced');
   }
   hideLoading();
   renderIdeas();
