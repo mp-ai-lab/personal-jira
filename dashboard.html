@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Personal Jira – Marcin Pindral</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f0f13;
+  --surface:   #17171d;
+  --surface2:  #1e1e26;
+  --surface3:  #252530;
+  --border:    #2c2c3a;
+  --border2:   #38384a;
+  --text:      #e2e2f0;
+  --text2:     #8e8ea8;
+  --text3:     #55556a;
+  --accent:    #6472f3;
+  --accent-bg: rgba(100,114,243,0.13);
+  --candidate: #a78bfa;
+  --queue:     #38bdf8;
+  --rejected:  #f87171;
+  --todo:      #fbbf24;
+  --inprogress:#60a5fa;
+  --done:      #34d399;
+  --stopped:   #9ca3af;
+  --danger:    #f87171;
+  --danger-bg: rgba(248,113,113,0.12);
+  --r: 10px;
+  --rs: 7px;
+  --shadow:  0 1px 4px rgba(0,0,0,0.35);
+  --shadow2: 0 6px 20px rgba(0,0,0,0.4);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ── Header ─────────────────────────────────────────── */
+.app-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-title    { font-size: 15px; font-weight: 700; color: var(--text); }
+.app-subtitle { font-size: 13px; color: var(--text3); flex: 1; }
+
+/* Sync status badge */
+.sync-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text3);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  transition: color .2s, border-color .2s;
+  user-select: none;
+  cursor: default;
+}
+.sync-badge.syncing { color: var(--accent); border-color: var(--accent); }
+.sync-badge.synced  { color: var(--done);   border-color: var(--done); }
+.sync-badge.error   { color: var(--danger); border-color: var(--danger); }
+.sync-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.sync-badge.syncing .sync-dot {
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+}
+
+/* ── Tabs ─────────────────────────────────────────────── */
+.tabs-nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+  display: flex;
+}
+.tab-btn {
+  padding: 12px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text2);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+.content { padding: 24px; }
+
+/* ── Loading overlay ─────────────────────────────────── */
+#loading-overlay {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  transition: opacity .3s;
+}
+#loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 13px; color: var(--text3); }
+
+/* ── Kanban (Tab 1) ──────────────────────────────────── */
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.column {
+  background: var(--surface2);
+  border-radius: var(--r);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+}
+.column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.column-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.col-candidate .column-title { color: var(--candidate); }
+.col-queue     .column-title { color: var(--queue); }
+.col-rejected  .column-title { color: var(--rejected); }
+
+.col-count {
+  background: var(--surface3);
+  color: var(--text3);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.drop-zone {
+  min-height: 44px;
+  border-radius: var(--rs);
+  transition: background .15s, outline .15s;
+  padding: 2px;
+}
+.drop-zone.drag-over {
+  background: var(--accent-bg);
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+/* ── Cards ───────────────────────────────────────────── */
+.card {
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-radius: var(--rs);
+  padding: 10px 12px;
+  margin-bottom: 7px;
+  cursor: grab;
+  box-shadow: var(--shadow);
+  transition: box-shadow .15s, transform .1s, border-color .15s;
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.card:hover { box-shadow: var(--shadow2); border-color: var(--border2); }
+.card:active { cursor: grabbing; }
+.card.dragging { opacity: 0.3; transform: scale(0.97); }
+
+.card-title { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--text); padding-right: 22px; }
+.card-meta  { font-size: 11px; color: var(--text3); margin-top: 5px; }
+
+.card-del {
+  position: absolute;
+  top: 7px; right: 7px;
+  width: 20px; height: 20px;
+  border-radius: 4px; border: none;
+  background: transparent; color: var(--text3);
+  cursor: pointer; font-size: 15px;
+  display: none; align-items: center;
+  justify-content: center; line-height: 1;
+}
+.card:hover .card-del { display: flex; }
+.card-del:hover { background: var(--danger-bg); color: var(--danger); }
+
+/* ── Inline form ─────────────────────────────────────── */
+.card-form {
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  border-radius: var(--rs);
+  padding: 9px 11px;
+  margin-bottom: 7px;
+  box-shadow: var(--shadow2);
+}
+.card-form textarea {
+  width: 100%;
+  border: none; outline: none;
+  font-family: inherit; font-size: 13px;
+  resize: none; color: var(--text);
+  background: transparent; display: block;
+}
+.form-actions { display: flex; gap: 6px; margin-top: 7px; }
+.btn-add {
+  padding: 4px 12px;
+  background: var(--accent); color: #fff;
+  border: none; border-radius: var(--rs);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: opacity .15s;
+}
+.btn-add:hover { opacity: 0.85; }
+.btn-cancel {
+  padding: 4px 8px;
+  background: none; color: var(--text2);
+  border: none; font-size: 12px;
+  cursor: pointer; border-radius: var(--rs);
+}
+.btn-cancel:hover { background: var(--surface3); }
+
+/* ── Add trigger ─────────────────────────────────────── */
+.add-trigger {
+  display: flex; align-items: center; gap: 5px;
+  padding: 7px 5px;
+  color: var(--text3); font-size: 12.5px;
+  cursor: pointer; border-radius: var(--rs);
+  transition: background .15s, color .15s;
+  margin-top: 2px;
+}
+.add-trigger:hover { background: var(--surface3); color: var(--text2); }
+
+/* ── Context Menu ────────────────────────────────────── */
+#ctx-menu {
+  position: fixed; z-index: 9999;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--rs);
+  padding: 5px;
+  box-shadow: var(--shadow2);
+  min-width: 210px;
+  display: none;
+}
+.ctx-item {
+  padding: 8px 12px; font-size: 13px;
+  color: var(--text); cursor: pointer;
+  border-radius: 5px;
+  display: flex; align-items: center; gap: 8px;
+  transition: background .12s;
+}
+.ctx-item:hover { background: var(--surface3); }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover { background: var(--danger-bg); }
+.ctx-separator { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* ── Project Picker ──────────────────────────────────── */
+#proj-picker {
+  position: fixed; z-index: 10000;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--rs);
+  padding: 8px;
+  box-shadow: var(--shadow2);
+  min-width: 220px;
+  display: none;
+}
+.picker-title {
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--text3); padding: 2px 8px 6px;
+}
+.picker-item {
+  padding: 8px 10px; font-size: 13px;
+  color: var(--text); cursor: pointer;
+  border-radius: 5px;
+  display: flex; align-items: center; gap: 8px;
+  transition: background .12s;
+}
+.picker-item:hover { background: var(--accent-bg); color: var(--accent); }
+.picker-item.new-proj {
+  color: var(--accent); font-weight: 500;
+  border-top: 1px solid var(--border);
+  margin-top: 4px; padding-top: 10px;
+}
+.picker-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Matrix (Tab 2) ──────────────────────────────────── */
+.matrix-shell {
+  background: var(--surface);
+  border-radius: var(--r);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden; overflow-x: auto;
+}
+.matrix-table { min-width: 860px; width: 100%; border-collapse: collapse; }
+.matrix-table thead th {
+  padding: 11px 14px; text-align: left;
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.8px;
+  border-bottom: 2px solid var(--border2);
+  background: var(--surface2); white-space: nowrap;
+}
+.th-project    { color: var(--text3); width: 190px; }
+.th-todo       { color: var(--todo); }
+.th-inprogress { color: var(--inprogress); }
+.th-done       { color: var(--done); }
+.th-stopped    { color: var(--stopped); }
+
+.matrix-table tbody td {
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  padding: 8px; min-height: 70px;
+}
+.matrix-table tbody td:not(:last-child) { border-right: 1px solid var(--border); }
+
+.proj-cell {
+  padding: 0 !important;
+  border-right: 2px solid var(--border2) !important;
+  background: var(--surface2);
+}
+.proj-cell-inner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; font-weight: 600;
+  font-size: 13px; min-height: 70px;
+}
+.proj-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.proj-name { flex: 1; }
+.proj-del {
+  width: 20px; height: 20px;
+  border-radius: 4px; border: none;
+  background: transparent; color: var(--text3);
+  cursor: pointer; font-size: 15px;
+  display: none; align-items: center;
+  justify-content: center; flex-shrink: 0;
+}
+.proj-cell-inner:hover .proj-del { display: flex; }
+.proj-del:hover { background: var(--danger-bg); color: var(--danger); }
+
+.status-cell { transition: background .13s; }
+.status-cell.drag-over {
+  background: var(--accent-bg);
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px; border-radius: 4px;
+}
+
+.matrix-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--rs);
+  padding: 7px 28px 7px 10px;
+  margin-bottom: 5px; cursor: grab;
+  font-size: 12.5px; font-weight: 500;
+  box-shadow: var(--shadow);
+  transition: box-shadow .13s, border-color .13s;
+  position: relative; user-select: none;
+  -webkit-user-select: none; line-height: 1.4; color: var(--text);
+}
+.matrix-card:hover { box-shadow: var(--shadow2); border-color: var(--border2); }
+.matrix-card:active { cursor: grabbing; }
+.matrix-card.dragging { opacity: 0.3; }
+.matrix-card .card-del { display: none; }
+.matrix-card:hover .card-del { display: flex; }
+
+.add-task-trigger {
+  color: var(--text3); font-size: 12px;
+  cursor: pointer; padding: 3px 2px;
+  opacity: 0; transition: opacity .13s;
+  display: flex; align-items: center; gap: 3px;
+}
+td:hover .add-task-trigger { opacity: 1; }
+.add-task-trigger:hover { color: var(--accent); }
+
+.add-project-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 12px 14px; color: var(--text3);
+  font-size: 13px; cursor: pointer;
+  border-top: 1px solid var(--border);
+  transition: color .13s, background .13s;
+}
+.add-project-row:hover { color: var(--accent); background: var(--accent-bg); }
+
+/* ── Toast ───────────────────────────────────────────── */
+#toast {
+  position: fixed; bottom: 28px; right: 28px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-left: 3px solid var(--done);
+  color: var(--text);
+  padding: 10px 16px; border-radius: var(--rs);
+  font-size: 13px; box-shadow: var(--shadow2);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .25s, transform .25s;
+  pointer-events: none; z-index: 99999; max-width: 320px;
+}
+#toast.show { opacity: 1; transform: translateY(0); }
+
+/* ── Empty state ─────────────────────────────────────── */
+.empty-row td {
+  text-align: center;
+  padding: 48px 20px !important;
+  color: var(--text3); font-size: 13px;
+}
+
+/* ── Config banner ───────────────────────────────────── */
+#config-banner {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-left: 3px solid var(--todo);
+  border-radius: var(--rs);
+  padding: 10px 16px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: var(--text2);
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+#config-banner.show { display: flex; }
+#config-banner a { color: var(--accent); text-decoration: none; }
+#config-banner a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Loading your dashboard…</div>
+</div>
+
+<header class="app-header">
+  <span style="font-size:20px">🗂️</span>
+  <span class="app-title">Personal Jira</span>
+  <span class="app-subtitle">— Marcin Pindral</span>
+  <div class="sync-badge" id="sync-badge">
+    <span class="sync-dot"></span>
+    <span id="sync-label">local</span>
+  </div>
+</header>
+
+<nav class="tabs-nav">
+  <button class="tab-btn active" id="tab-btn-ideas"    onclick="switchTab('ideas', this)">💡 Idea Bank</button>
+  <button class="tab-btn"        id="tab-btn-projects" onclick="switchTab('projects', this)">📋 Project Management</button>
+</nav>
+
+<div class="content">
+  <!-- Config banner (shown when SCRIPT_URL not set) -->
+  <div id="config-banner">
+    ⚙️ Running in <strong>local-only mode</strong>. To sync with Google Sheets, open this file and paste your Apps Script URL into the <code>SCRIPT_URL</code> constant at the top of the &lt;script&gt;.
+    &nbsp;<a href="#" onclick="document.getElementById('config-banner').classList.remove('show'); return false;">Dismiss</a>
+  </div>
+
+  <!-- Tab 1: Idea Bank -->
+  <div id="tab-ideas" class="tab-pane active">
+    <div class="kanban">
+      <div class="column col-candidate">
+        <div class="column-header">
+          <span class="column-title">Candidate</span>
+          <span class="col-count" id="cnt-candidate">0</span>
+        </div>
+        <div class="drop-zone" id="zone-candidate"></div>
+        <div class="add-trigger" onclick="showIdeaForm('candidate')">＋ Add idea</div>
+      </div>
+      <div class="column col-queue">
+        <div class="column-header">
+          <span class="column-title">Queue</span>
+          <span class="col-count" id="cnt-queue">0</span>
+        </div>
+        <div class="drop-zone" id="zone-queue"></div>
+        <div class="add-trigger" onclick="showIdeaForm('queue')">＋ Add idea</div>
+      </div>
+      <div class="column col-rejected">
+        <div class="column-header">
+          <span class="column-title">Rejected</span>
+          <span class="col-count" id="cnt-rejected">0</span>
+        </div>
+        <div class="drop-zone" id="zone-rejected"></div>
+        <div class="add-trigger" onclick="showIdeaForm('rejected')">＋ Add idea</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab 2: Projects -->
+  <div id="tab-projects" class="tab-pane">
+    <div class="matrix-shell">
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th class="th-project">Project</th>
+            <th class="th-todo">To-Do</th>
+            <th class="th-inprogress">In Progress</th>
+            <th class="th-done">Done</th>
+            <th class="th-stopped">Stopped</th>
+          </tr>
+        </thead>
+        <tbody id="matrix-body"></tbody>
+      </table>
+      <div class="add-project-row" onclick="addProject()">＋ Add project</div>
+    </div>
+  </div>
+</div>
+
+<!-- Context menu -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-move">📋 Add to Project Management</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item danger" id="ctx-delete">🗑 Delete</div>
+</div>
+
+<!-- Project picker -->
+<div id="proj-picker">
+  <div class="picker-title">Move to project</div>
+  <div id="picker-list"></div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+//  ★ CONFIGURATION — paste your Apps Script /exec URL here
+// ─────────────────────────────────────────────────────────
+const SCRIPT_URL = 'https://script.google.com/a/macros/trilogy.com/s/AKfycbw8oey437Rn6hDHprqJXLnQhNHOaZLm5_exnw-TrfV6Sj7vNRrr8ZFUCoz1bg8HngR8/exec';
+// ─────────────────────────────────────────────────────────
+
+const PROJ_COLORS = ['#ef4444','#f59e0b','#10b981','#6366f1','#8b5cf6','#ec4899','#06b6d4','#f97316','#84cc16','#a78bfa'];
+const STATUSES    = ['todo','inprogress','done','stopped'];
+const LS_KEY      = 'pjira_marcin_v1';
+
+let state = { ideas: { candidate: [], queue: [], rejected: [] }, projects: [], tasks: [] };
+let drag    = null;
+let ctxMeta = null;
+
+function uid()     { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function dateStr() { return new Date().toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
+function esc(s)    { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+const isSheetsConfigured = () => SCRIPT_URL && SCRIPT_URL.startsWith('https://');
+
+// ── Sync badge ──────────────────────────────────────────
+function setSyncBadge(mode) {   // 'local' | 'syncing' | 'synced' | 'error'
+  const badge = document.getElementById('sync-badge');
+  const label = document.getElementById('sync-label');
+  badge.className = 'sync-badge ' + (mode === 'local' ? '' : mode);
+  const labels = { local:'local only', syncing:'syncing…', synced:'synced', error:'sync error' };
+  label.textContent = labels[mode] || mode;
+}
+
+// ── Persistence ─────────────────────────────────────────
+function saveLocal() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e) {}
+}
+function loadLocal() {
+  try { const d = localStorage.getItem(LS_KEY); if (d) Object.assign(state, JSON.parse(d)); } catch(e) {}
+}
+
+function save() {
+  saveLocal();
+  if (!isSheetsConfigured()) return;
+  setSyncBadge('syncing');
+  fetch(SCRIPT_URL, { method:'POST', mode:'no-cors', body: JSON.stringify(state) })
+    .then(()  => setSyncBadge('synced'))
+    .catch(()  => setSyncBadge('error'));
+}
+
+function loadFromSheets() {
+  return new Promise((resolve) => {
+    const cbName = '__dashLoad_' + uid();
+    const timeout = setTimeout(() => {
+      delete window[cbName];
+      resolve(null);
+    }, 6000);
+
+    window[cbName] = (data) => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      resolve(data);
+    };
+
+    const s = document.createElement('script');
+    s.src = SCRIPT_URL + '?callback=' + cbName + '&t=' + Date.now();
+    s.onerror = () => { clearTimeout(timeout); delete window[cbName]; resolve(null); };
+    document.head.appendChild(s);
+  });
+}
+
+async function load() {
+  if (isSheetsConfigured()) {
+    setSyncBadge('syncing');
+    const data = await loadFromSheets();
+    if (data && typeof data === 'object' && (data.ideas || data.projects)) {
+      Object.assign(state, data);
+      saveLocal(); // cache locally too
+      setSyncBadge('synced');
+    } else {
+      // Sheets load failed — fall back to localStorage
+      loadLocal();
+      setSyncBadge('error');
+    }
+  } else {
+    loadLocal();
+    setSyncBadge('local');
+    document.getElementById('config-banner').classList.add('show');
+  }
+  hideLoading();
+  renderIdeas();
+  renderProjects();
+}
+
+function hideLoading() {
+  const ov = document.getElementById('loading-overlay');
+  ov.classList.add('hidden');
+  setTimeout(() => ov.remove(), 350);
+}
+
+// ── Tabs ────────────────────────────────────────────────
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Toast ───────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ── Drag & Drop ─────────────────────────────────────────
+function onDragStart(e, type, id, from) {
+  drag = { type, id, from };
+  e.dataTransfer.effectAllowed = 'move';
+  requestAnimationFrame(() => { document.getElementById('card-' + id)?.classList.add('dragging'); });
+}
+function onDragEnd() {
+  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+// ── Context Menu ─────────────────────────────────────────
+const ctxMenu    = document.getElementById('ctx-menu');
+const projPicker = document.getElementById('proj-picker');
+
+function showContextMenu(e, ideaId, col) {
+  e.preventDefault();
+  closeAllOverlays();
+  ctxMeta = { ideaId, col };
+  const x = Math.min(e.clientX, window.innerWidth  - 225);
+  const y = Math.min(e.clientY, window.innerHeight - 110);
+  ctxMenu.style.left = x + 'px';
+  ctxMenu.style.top  = y + 'px';
+  ctxMenu.style.display = 'block';
+}
+
+document.getElementById('ctx-move').onclick = () => {
+  if (!ctxMeta) return;
+  ctxMenu.style.display = 'none';
+  openProjectPicker();
+};
+document.getElementById('ctx-delete').onclick = () => {
+  if (!ctxMeta) return;
+  ctxMenu.style.display = 'none';
+  deleteIdea(ctxMeta.ideaId, ctxMeta.col);
+  ctxMeta = null;
+};
+
+function openProjectPicker() {
+  const list = document.getElementById('picker-list');
+  list.innerHTML = '';
+  state.projects.forEach(proj => {
+    const item = document.createElement('div');
+    item.className = 'picker-item';
+    item.innerHTML = `<span class="picker-dot" style="background:${proj.color}"></span>${esc(proj.name)}`;
+    item.onclick = () => moveIdeaToProject(proj.id);
+    list.appendChild(item);
+  });
+  const newItem = document.createElement('div');
+  newItem.className = 'picker-item new-proj';
+  newItem.innerHTML = '＋ New project…';
+  newItem.onclick = () => {
+    closeAllOverlays();
+    const name = prompt('New project name:');
+    if (!name?.trim()) return;
+    const color = PROJ_COLORS[state.projects.length % PROJ_COLORS.length];
+    const proj = { id: uid(), name: name.trim(), color };
+    state.projects.push(proj);
+    save(); renderProjects();
+    moveIdeaToProject(proj.id);
+  };
+  list.appendChild(newItem);
+  const cx = parseInt(ctxMenu.style.left) || 100;
+  const cy = parseInt(ctxMenu.style.top)  || 100;
+  projPicker.style.left = Math.min(cx, window.innerWidth  - 240) + 'px';
+  projPicker.style.top  = Math.min(cy + 10, window.innerHeight - (state.projects.length + 2) * 42 - 40) + 'px';
+  projPicker.style.display = 'block';
+}
+
+function moveIdeaToProject(projectId) {
+  if (!ctxMeta) return;
+  const { ideaId, col } = ctxMeta;
+  const idea = state.ideas[col].find(i => i.id === ideaId);
+  if (!idea) { closeAllOverlays(); return; }
+  state.ideas[col] = state.ideas[col].filter(i => i.id !== ideaId);
+  state.tasks.push({ id: uid(), projectId, status: 'todo', title: idea.title, createdAt: idea.createdAt || dateStr() });
+  save(); renderIdeas(); renderProjects();
+  const proj = state.projects.find(p => p.id === projectId);
+  showToast(`"${idea.title}" → ${proj ? proj.name : 'project'} / To-Do`);
+  closeAllOverlays(); ctxMeta = null;
+  switchTab('projects', document.getElementById('tab-btn-projects'));
+}
+
+function closeAllOverlays() {
+  ctxMenu.style.display = projPicker.style.display = 'none';
+}
+document.addEventListener('click', e => {
+  if (!ctxMenu.contains(e.target) && !projPicker.contains(e.target)) closeAllOverlays();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAllOverlays(); });
+
+// ── Ideas ───────────────────────────────────────────────
+function showIdeaForm(column) {
+  document.querySelectorAll('.card-form').forEach(f => f.remove());
+  const zone = document.getElementById('zone-' + column);
+  const form = document.createElement('div');
+  form.className = 'card-form';
+  form.innerHTML = `
+    <textarea rows="2" placeholder="Describe your idea…"></textarea>
+    <div class="form-actions">
+      <button class="btn-add"    onclick="submitIdea('${column}', this.closest('.card-form'))">Add</button>
+      <button class="btn-cancel" onclick="this.closest('.card-form').remove()">Cancel</button>
+    </div>`;
+  zone.appendChild(form);
+  const ta = form.querySelector('textarea');
+  ta.focus();
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitIdea(column, form); }
+    if (e.key === 'Escape') form.remove();
+  });
+}
+
+function submitIdea(column, form) {
+  const ta = form.querySelector('textarea');
+  const title = ta.value.trim();
+  if (!title) { form.remove(); return; }
+  state.ideas[column].push({ id: uid(), title, createdAt: dateStr() });
+  save(); renderIdeas();
+}
+
+function deleteIdea(id, column) {
+  state.ideas[column] = state.ideas[column].filter(i => i.id !== id);
+  save(); renderIdeas();
+}
+
+function renderIdeas() {
+  ['candidate','queue','rejected'].forEach(col => {
+    const zone  = document.getElementById('zone-' + col);
+    const count = document.getElementById('cnt-' + col);
+    const forms = [...zone.querySelectorAll('.card-form')];
+    zone.innerHTML = '';
+    state.ideas[col].forEach(idea => {
+      const card = document.createElement('div');
+      card.className = 'card'; card.id = 'card-' + idea.id;
+      card.draggable = true; card.title = 'Right-click for options';
+      card.innerHTML = `
+        <button class="card-del" onclick="deleteIdea('${idea.id}','${col}')">×</button>
+        <div class="card-title">${esc(idea.title)}</div>
+        ${idea.createdAt ? `<div class="card-meta">${idea.createdAt}</div>` : ''}`;
+      card.addEventListener('dragstart', e => onDragStart(e, 'idea', idea.id, col));
+      card.addEventListener('dragend', onDragEnd);
+      card.addEventListener('contextmenu', e => showContextMenu(e, idea.id, col));
+      zone.appendChild(card);
+    });
+    forms.forEach(f => zone.appendChild(f));
+    count.textContent = state.ideas[col].length;
+    zone.ondragover  = e => { e.preventDefault(); zone.classList.add('drag-over'); };
+    zone.ondragleave = ()  => zone.classList.remove('drag-over');
+    zone.ondrop      = e  => {
+      e.preventDefault(); zone.classList.remove('drag-over');
+      if (!drag || drag.type !== 'idea' || drag.from === col) { drag = null; return; }
+      const idea = state.ideas[drag.from].find(i => i.id === drag.id);
+      if (idea) {
+        state.ideas[drag.from] = state.ideas[drag.from].filter(i => i.id !== drag.id);
+        state.ideas[col].push(idea);
+        save(); renderIdeas();
+      }
+      drag = null;
+    };
+  });
+}
+
+// ── Projects ────────────────────────────────────────────
+function addProject() {
+  const name = prompt('New project name:');
+  if (!name?.trim()) return;
+  const color = PROJ_COLORS[state.projects.length % PROJ_COLORS.length];
+  state.projects.push({ id: uid(), name: name.trim(), color });
+  save(); renderProjects();
+}
+
+function deleteProject(id) {
+  if (!confirm('Delete this project and all its tasks?')) return;
+  state.projects = state.projects.filter(p => p.id !== id);
+  state.tasks    = state.tasks.filter(t => t.projectId !== id);
+  save(); renderProjects();
+}
+
+function showTaskForm(projectId, status) {
+  document.querySelectorAll('.task-form').forEach(f => f.remove());
+  const cell = document.getElementById(`cell-${projectId}-${status}`);
+  if (!cell) return;
+  const form = document.createElement('div');
+  form.className = 'card-form task-form';
+  form.style.cssText = 'margin:0 0 5px;';
+  form.innerHTML = `
+    <textarea rows="2" placeholder="Task name…"></textarea>
+    <div class="form-actions">
+      <button class="btn-add"    onclick="submitTask('${projectId}','${status}',this.closest('.task-form'))">Add</button>
+      <button class="btn-cancel" onclick="this.closest('.task-form').remove()">Cancel</button>
+    </div>`;
+  cell.insertBefore(form, cell.querySelector('.add-task-trigger'));
+  const ta = form.querySelector('textarea');
+  ta.focus();
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitTask(projectId, status, form); }
+    if (e.key === 'Escape') form.remove();
+  });
+}
+
+function submitTask(projectId, status, form) {
+  const ta = form.querySelector('textarea');
+  const title = ta.value.trim();
+  if (!title) { form.remove(); return; }
+  state.tasks.push({ id: uid(), projectId, status, title, createdAt: dateStr() });
+  save(); renderProjects();
+}
+
+function deleteTask(id) {
+  state.tasks = state.tasks.filter(t => t.id !== id);
+  save(); renderProjects();
+}
+
+function renderProjects() {
+  const tbody = document.getElementById('matrix-body');
+  tbody.innerHTML = '';
+  if (!state.projects.length) {
+    const tr = document.createElement('tr');
+    tr.className = 'empty-row';
+    tr.innerHTML = `<td colspan="5">No projects yet — click <strong>＋ Add project</strong> below.</td>`;
+    tbody.appendChild(tr); return;
+  }
+  state.projects.forEach(proj => {
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.className = 'proj-cell';
+    nameTd.innerHTML = `
+      <div class="proj-cell-inner">
+        <span class="proj-dot" style="background:${proj.color}"></span>
+        <span class="proj-name">${esc(proj.name)}</span>
+        <button class="proj-del" onclick="deleteProject('${proj.id}')" title="Delete project">×</button>
+      </div>`;
+    tr.appendChild(nameTd);
+    STATUSES.forEach(status => {
+      const td = document.createElement('td');
+      td.className = 'status-cell';
+      td.id = `cell-${proj.id}-${status}`;
+      td.addEventListener('dragover',  e  => { e.preventDefault(); td.classList.add('drag-over'); });
+      td.addEventListener('dragleave', ()  => td.classList.remove('drag-over'));
+      td.addEventListener('drop', e => {
+        e.preventDefault(); td.classList.remove('drag-over');
+        if (!drag || drag.type !== 'task') return;
+        const task = state.tasks.find(t => t.id === drag.id);
+        if (task) { task.status = status; task.projectId = proj.id; save(); renderProjects(); }
+        drag = null;
+      });
+      state.tasks.filter(t => t.projectId === proj.id && t.status === status).forEach(task => {
+        const card = document.createElement('div');
+        card.className = 'matrix-card'; card.id = 'card-' + task.id; card.draggable = true;
+        card.innerHTML = `<button class="card-del" onclick="deleteTask('${task.id}')">×</button>${esc(task.title)}`;
+        card.addEventListener('dragstart', e => onDragStart(e, 'task', task.id, status));
+        card.addEventListener('dragend', onDragEnd);
+        td.appendChild(card);
+      });
+      const trig = document.createElement('div');
+      trig.className = 'add-task-trigger'; trig.textContent = '＋ Add task';
+      trig.onclick = () => showTaskForm(proj.id, status);
+      td.appendChild(trig);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+// ── Init ────────────────────────────────────────────────
+load();
+</script>
+</body>
+</html>
