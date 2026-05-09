@@ -521,6 +521,7 @@ td:hover .add-task-trigger { opacity: 1; }
 <!-- Context menu -->
 <div id="ctx-menu">
   <div class="ctx-item" id="ctx-move">📋 Add to Project Management</div>
+  <div class="ctx-item" id="ctx-rename">✏️ Rename</div>
   <div class="ctx-separator"></div>
   <div class="ctx-item danger" id="ctx-delete">🗑 Delete</div>
 </div>
@@ -637,15 +638,17 @@ function onDragEnd() {
 const ctxMenu    = document.getElementById('ctx-menu');
 const projPicker = document.getElementById('proj-picker');
 
-function showContextMenu(e, ideaId, col) {
+function showContextMenu(e, type, id, extra) {
   e.preventDefault();
   closeAllOverlays();
-  ctxMeta = { ideaId, col };
+  ctxMeta = { type, id, extra }; // type: 'idea' | 'project', extra: col for ideas
   const x = Math.min(e.clientX, window.innerWidth  - 225);
-  const y = Math.min(e.clientY, window.innerHeight - 110);
+  const y = Math.min(e.clientY, window.innerHeight - 130);
   ctxMenu.style.left = x + 'px';
   ctxMenu.style.top  = y + 'px';
   ctxMenu.style.display = 'block';
+  // Show/hide "Add to Project Management" for ideas only
+  document.getElementById('ctx-move').style.display = type === 'idea' ? 'flex' : 'none';
 }
 
 document.getElementById('ctx-move').onclick = () => {
@@ -653,10 +656,18 @@ document.getElementById('ctx-move').onclick = () => {
   ctxMenu.style.display = 'none';
   openProjectPicker();
 };
+document.getElementById('ctx-rename').onclick = () => {
+  if (!ctxMeta) return;
+  ctxMenu.style.display = 'none';
+  if (ctxMeta.type === 'idea')    renameIdea(ctxMeta.id, ctxMeta.extra);
+  if (ctxMeta.type === 'project') renameProject(ctxMeta.id);
+  ctxMeta = null;
+};
 document.getElementById('ctx-delete').onclick = () => {
   if (!ctxMeta) return;
   ctxMenu.style.display = 'none';
-  deleteIdea(ctxMeta.ideaId, ctxMeta.col);
+  if (ctxMeta.type === 'idea')    deleteIdea(ctxMeta.id, ctxMeta.extra);
+  if (ctxMeta.type === 'project') deleteProject(ctxMeta.id);
   ctxMeta = null;
 };
 
@@ -693,7 +704,8 @@ function openProjectPicker() {
 
 function moveIdeaToProject(projectId) {
   if (!ctxMeta) return;
-  const { ideaId, col } = ctxMeta;
+  const col    = ctxMeta.extra;
+  const ideaId = ctxMeta.id;
   const idea = state.ideas[col].find(i => i.id === ideaId);
   if (!idea) { closeAllOverlays(); return; }
   state.ideas[col] = state.ideas[col].filter(i => i.id !== ideaId);
@@ -712,6 +724,59 @@ document.addEventListener('click', e => {
   if (!ctxMenu.contains(e.target) && !projPicker.contains(e.target)) closeAllOverlays();
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAllOverlays(); });
+
+// ── Rename ──────────────────────────────────────────────
+function renameIdea(id, col) {
+  const card = document.getElementById('card-' + id);
+  if (!card) return;
+  const titleEl = card.querySelector('.card-title');
+  const item    = state.ideas[col].find(i => i.id === id);
+  if (!item) return;
+
+  const input = document.createElement('input');
+  input.type  = 'text';
+  input.value = item.title;
+  input.style.cssText = 'width:100%;border:none;outline:none;background:transparent;font:inherit;font-size:13px;font-weight:500;color:inherit;padding:0;';
+  titleEl.innerHTML = '';
+  titleEl.appendChild(input);
+  input.focus(); input.select();
+
+  const commit = () => {
+    const v = input.value.trim();
+    if (v) { item.title = v; save(); }
+    renderIdeas();
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { renderIdeas(); }
+  });
+}
+
+function renameProject(id) {
+  const proj   = state.projects.find(p => p.id === id);
+  if (!proj) return;
+  const nameEl = document.getElementById('proj-name-' + id);
+  if (!nameEl) return;
+
+  const input = document.createElement('input');
+  input.type  = 'text';
+  input.value = proj.name;
+  input.style.cssText = 'flex:1;border:none;outline:none;background:transparent;font:inherit;font-size:13px;font-weight:600;color:inherit;padding:0;min-width:0;';
+  nameEl.replaceWith(input);
+  input.focus(); input.select();
+
+  const commit = () => {
+    const v = input.value.trim();
+    if (v) { proj.name = v; save(); }
+    renderProjects();
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { renderProjects(); }
+  });
+}
 
 // ── Ideas ───────────────────────────────────────────────
 function showIdeaForm(column) {
@@ -763,7 +828,7 @@ function renderIdeas() {
         ${idea.createdAt ? `<div class="card-meta">${idea.createdAt}</div>` : ''}`;
       card.addEventListener('dragstart', e => onDragStart(e, 'idea', idea.id, col));
       card.addEventListener('dragend', onDragEnd);
-      card.addEventListener('contextmenu', e => showContextMenu(e, idea.id, col));
+      card.addEventListener('contextmenu', e => showContextMenu(e, 'idea', idea.id, col));
       zone.appendChild(card);
     });
     forms.forEach(f => zone.appendChild(f));
@@ -849,11 +914,12 @@ function renderProjects() {
     const nameTd = document.createElement('td');
     nameTd.className = 'proj-cell';
     nameTd.innerHTML = `
-      <div class="proj-cell-inner">
+      <div class="proj-cell-inner" title="Right-click to rename or delete">
         <span class="proj-dot" style="background:${proj.color}"></span>
-        <span class="proj-name">${esc(proj.name)}</span>
+        <span class="proj-name" id="proj-name-${proj.id}">${esc(proj.name)}</span>
         <button class="proj-del" onclick="deleteProject('${proj.id}')" title="Delete project">×</button>
       </div>`;
+    nameTd.addEventListener('contextmenu', e => showContextMenu(e, 'project', proj.id));
     tr.appendChild(nameTd);
     STATUSES.forEach(status => {
       const td = document.createElement('td');
