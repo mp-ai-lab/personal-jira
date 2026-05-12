@@ -661,6 +661,7 @@ document.getElementById('ctx-rename').onclick = () => {
   ctxMenu.style.display = 'none';
   if (ctxMeta.type === 'idea')    renameIdea(ctxMeta.id, ctxMeta.extra);
   if (ctxMeta.type === 'project') renameProject(ctxMeta.id);
+  if (ctxMeta.type === 'task')    renameTask(ctxMeta.id);
   ctxMeta = null;
 };
 document.getElementById('ctx-delete').onclick = () => {
@@ -668,6 +669,7 @@ document.getElementById('ctx-delete').onclick = () => {
   ctxMenu.style.display = 'none';
   if (ctxMeta.type === 'idea')    deleteIdea(ctxMeta.id, ctxMeta.extra);
   if (ctxMeta.type === 'project') deleteProject(ctxMeta.id);
+  if (ctxMeta.type === 'task')    deleteTask(ctxMeta.id);
   ctxMeta = null;
 };
 
@@ -750,6 +752,32 @@ function renameIdea(id, col) {
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
     if (e.key === 'Escape') { renderIdeas(); }
+  });
+}
+
+function renameTask(id) {
+  const card = document.getElementById('card-' + id);
+  if (!card) return;
+  const task = state.tasks.find(t => t.id === id);
+  if (!task) return;
+
+  const input = document.createElement('input');
+  input.type  = 'text';
+  input.value = task.title;
+  input.style.cssText = 'width:100%;border:none;outline:none;background:transparent;font:inherit;font-size:12.5px;font-weight:500;color:inherit;padding:0;';
+  card.innerHTML = '';
+  card.appendChild(input);
+  input.focus(); input.select();
+
+  const commit = () => {
+    const v = input.value.trim();
+    if (v) { task.title = v; save(); }
+    renderProjects();
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { renderProjects(); }
   });
 }
 
@@ -940,6 +968,7 @@ function renderProjects() {
         card.innerHTML = `<button class="card-del" onclick="deleteTask('${task.id}')">×</button>${esc(task.title)}`;
         card.addEventListener('dragstart', e => onDragStart(e, 'task', task.id, status));
         card.addEventListener('dragend', onDragEnd);
+        card.addEventListener('contextmenu', e => showContextMenu(e, 'task', task.id));
         td.appendChild(card);
       });
       const trig = document.createElement('div');
